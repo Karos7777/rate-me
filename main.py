@@ -287,7 +287,27 @@ RATE_HTML = """
             background: transparent; border: 2px solid rgba(255,255,255,0.45); color: white;
             padding: 12px; border-radius: 14px; font-size: 0.95rem; width: 100%; cursor: pointer;
         }
-        .message { display: none; font-size: 1.15rem; padding: 18px 0; }
+        .message { display: none; font-size: 1.15rem; padding: 12px 0 8px; line-height: 1.4; }
+        .copy-btn {
+            display: none;
+            background: white;
+            color: #5b21b6;
+            border: none;
+            padding: 12px 20px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            border-radius: 50px;
+            cursor: pointer;
+            margin-top: 10px;
+            width: 100%;
+        }
+        .copy-msg {
+            font-size: 0.85rem;
+            margin-top: 8px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .copy-msg.show { opacity: 1; }
         .live-stats { margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.25); }
         .avg-big { font-size: 2.3rem; font-weight: 800; margin: 8px 0 4px; }
         .avg-sub { font-size: 0.95rem; opacity: 0.9; }
@@ -312,6 +332,8 @@ RATE_HTML = """
         </div>
 
         <div class="message" id="message"></div>
+        <button class="copy-btn" id="copy-btn" onclick="copyTrackLink()">Скопировать ссылку на результаты</button>
+        <div class="copy-msg" id="copy-msg">Ссылка скопирована!</div>
 
         <div class="live-stats">
             <div class="avg-big" id="girl-average">—</div>
@@ -329,6 +351,7 @@ RATE_HTML = """
             document.getElementById('form').style.display = 'none';
             document.getElementById('message').style.display = 'block';
             document.getElementById('message').textContent = 'Вы уже участвовали с этого устройства';
+            document.getElementById('copy-btn').style.display = 'block';
         }
 
         function send(score) {
@@ -342,6 +365,7 @@ RATE_HTML = """
                 document.getElementById('form').style.display = 'none';
                 document.getElementById('message').style.display = 'block';
                 document.getElementById('message').textContent = 'Спасибо! Оценка отправлена';
+                document.getElementById('copy-btn').style.display = 'block';
                 updateGirlStats();
             });
         }
@@ -354,7 +378,20 @@ RATE_HTML = """
                 document.getElementById('form').style.display = 'none';
                 document.getElementById('message').style.display = 'block';
                 document.getElementById('message').textContent = 'Отказ учтён';
+                document.getElementById('copy-btn').style.display = 'block';
                 updateGirlStats();
+            });
+        }
+
+        function copyTrackLink() {
+            const link = window.location.origin + '/track/' + sessionId;
+            navigator.clipboard.writeText(link).then(() => {
+                const msg = document.getElementById('copy-msg');
+                msg.classList.add('show');
+                setTimeout(() => msg.classList.remove('show'), 2000);
+            }).catch(() => {
+                // запасной вариант, если clipboard не сработает
+                prompt("Скопируй ссылку:", link);
             });
         }
 
