@@ -1,12 +1,60 @@
 from flask import Flask, render_template_string, request, jsonify
 import uuid
-from collections import defaultdict
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import statistics
+from contextlib import contextmanager
 
 app = Flask(__name__)
 
-ratings = defaultdict(list)
-refusals = defaultdict(int)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
+
+@contextmanager
+def get_db():
+    conn = get_connection()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+def init_db():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ratings (
+                    id SERIAL PRIMARY KEY,
+                    session_id TEXT REFERENCES sessions(session_id),
+                    score INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS refusals (
+                    id SERIAL PRIMARY KEY,
+                    session_id TEXT REFERENCES sessions(session_id),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+# Инициализируем таблицы при запуске
+try:
+    init_db()
+except Exception as e:
+    print("DB init error:", e)
 
 HOST_HTML = """
 <!DOCTYPE html>
@@ -52,13 +100,8 @@ HOST_HTML = """
             font-size: 2.8rem;
             font-weight: 800;
             margin: 12px 0 4px;
-            letter-spacing: -1px;
         }
-        .sub {
-            font-size: 1.05rem;
-            opacity: 0.9;
-            margin-bottom: 6px;
-        }
+        .sub { font-size: 1.05rem; opacity: 0.9; margin-bottom: 6px; }
         .progress {
             background: rgba(255,255,255,0.2);
             border-radius: 50px;
@@ -83,20 +126,10 @@ HOST_HTML = """
             font-weight: 700;
             margin-top: 18px;
             width: 100%;
-            transition: transform 0.15s;
         }
         button:active { transform: scale(0.97); }
-        .hint {
-            font-size: 0.85rem;
-            opacity: 0.75;
-            margin-top: 14px;
-            line-height: 1.4;
-        }
-        .ref-count {
-            margin-top: 10px;
-            font-size: 0.95rem;
-            opacity: 0.85;
-        }
+        .hint { font-size: 0.85rem; opacity: 0.75; margin-top: 14px; line-height: 1.4; }
+        .ref-count { margin-top: 10px; font-size: 0.95rem; opacity: 0.85; }
     </style>
 </head>
 <body>
@@ -110,16 +143,13 @@ HOST_HTML = """
 
         <div id="active-session" style="display:none;">
             <div id="qrcode"></div>
-            
             <div class="stats" id="average">—</div>
             <div class="sub" id="status">Ждём первые 10 оценок</div>
-            
             <div class="progress">
                 <div class="progress-bar" id="bar" style="width: 0%"></div>
             </div>
             <div class="sub" id="count-text">0 оценок</div>
             <div class="ref-count" id="refusal-text">Отказов: 0</div>
-            
             <button onclick="startNew()">Новая сессия</button>
             <div class="hint">
                 Средняя появляется каждые 10 оценок<br>
@@ -145,25 +175,24 @@ HOST_HTML = """
 
                     const rateUrl = window.location.origin + '/rate/' + currentSession;
                     document.getElementById('qrcode').innerHTML = '';
-                    document.getElementById('qrcode').innerHTML = '';
-new QRCode(document.getElementById('qrcode'), {
-    text: rateUrl,
-    width: 200,
-    height: 200,
-    colorDark: "#5b21b6",
-    colorLight: "#ffffff",
-    correctLevel: QRCode.CorrectLevel.H
-});
+                    new QRCode(document.getElementById('qrcode'), {
+                        text: rateUrl,
+                        width: 200,
+                        height: 200,
+                        colorDark: "#5b21b6",
+                        colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.H
+                    });
 
                     if (pollInterval) clearInterval(pollInterval);
                     updateStats();
                     pollInterval = setInterval(updateStats, 1500);
-                });
+                })
+                .catch(err => alert('Ошибка: ' + err));
         }
 
         function updateStats() {
             if (!currentSession) return;
-            
             fetch('/stats/' + currentSession)
                 .then(r => r.json())
                 .then(data => {
@@ -171,8 +200,7 @@ new QRCode(document.getElementById('qrcode'), {
                     const avg = data.average;
                     const refs = data.refusals;
 
-                    const progressInBlock = count % 10;
-                    document.getElementById('bar').style.width = (progressInBlock / 10 * 100) + '%';
+                    document.getElementById('bar').style.width = ((count % 10) / 10 * 100) + '%';
                     document.getElementById('count-text').textContent = count + ' ' + pluralize(count);
                     document.getElementById('refusal-text').textContent = 'Отказов: ' + refs;
 
@@ -180,16 +208,12 @@ new QRCode(document.getElementById('qrcode'), {
                         lastShownAverage = avg;
                         document.getElementById('average').textContent = avg.toFixed(2);
                         document.getElementById('status').textContent = `Средняя на ${count} оценках`;
-                    } 
-                    else if (lastShownAverage !== null) {
+                    } else if (lastShownAverage !== null) {
                         document.getElementById('average').textContent = lastShownAverage.toFixed(2);
-                        const left = 10 - (count % 10);
-                        document.getElementById('status').textContent = `Следующее обновление через ${left}`;
-                    } 
-                    else {
+                        document.getElementById('status').textContent = `Следующее обновление через ${10 - (count % 10)}`;
+                    } else {
                         document.getElementById('average').textContent = '—';
-                        const left = 10 - count;
-                        document.getElementById('status').textContent = `Ещё ${left} до первой средней`;
+                        document.getElementById('status').textContent = `Ещё ${10 - count} до первой средней`;
                     }
                 });
         }
@@ -233,59 +257,20 @@ RATE_HTML = """
             width: 100%;
         }
         h1 { margin: 0 0 8px; font-size: 1.45rem; }
-        .desc {
-            font-size: 0.95rem;
-            opacity: 0.9;
-            line-height: 1.45;
-            margin-bottom: 20px;
-        }
-        .buttons {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 8px;
-            margin-bottom: 14px;
-        }
+        .desc { font-size: 0.95rem; opacity: 0.9; line-height: 1.45; margin-bottom: 20px; }
+        .buttons { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 14px; }
         .rate-btn {
-            background: white;
-            color: #5b21b6;
-            border: none;
-            padding: 18px 0;
-            font-size: 1.35rem;
-            font-weight: 700;
-            border-radius: 14px;
-            cursor: pointer;
+            background: white; color: #5b21b6; border: none; padding: 18px 0;
+            font-size: 1.35rem; font-weight: 700; border-radius: 14px; cursor: pointer;
         }
-        .rate-btn:active { transform: scale(0.9); }
         .refuse-btn {
-            background: transparent;
-            border: 2px solid rgba(255,255,255,0.45);
-            color: white;
-            padding: 12px;
-            border-radius: 14px;
-            font-size: 0.95rem;
-            width: 100%;
-            cursor: pointer;
+            background: transparent; border: 2px solid rgba(255,255,255,0.45); color: white;
+            padding: 12px; border-radius: 14px; font-size: 0.95rem; width: 100%; cursor: pointer;
         }
-        .message {
-            display: none;
-            font-size: 1.1rem;
-            padding: 12px 0;
-            opacity: 0.95;
-        }
-        .live-stats {
-            margin-top: 22px;
-            padding-top: 18px;
-            border-top: 1px solid rgba(255,255,255,0.25);
-        }
-        .avg-big {
-            font-size: 2.3rem;
-            font-weight: 800;
-            margin: 8px 0 4px;
-        }
-        .avg-sub {
-            font-size: 0.95rem;
-            opacity: 0.9;
-        }
+        .message { display: none; font-size: 1.15rem; padding: 18px 0; }
+        .live-stats { margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.25); }
+        .avg-big { font-size: 2.3rem; font-weight: 800; margin: 8px 0 4px; }
+        .avg-sub { font-size: 0.95rem; opacity: 0.9; }
     </style>
 </head>
 <body>
@@ -294,7 +279,7 @@ RATE_HTML = """
         <div class="desc">
             Это социальный эксперимент.<br>
             Поставь оценку внешности от 1 до 10.<br>
-            Полностью анонимно. Никаких данных не собирается.
+            Полностью анонимно.
         </div>
 
         <div id="form">
@@ -317,15 +302,24 @@ RATE_HTML = """
 
     <script>
         const sessionId = "{{ session_id }}";
+        const storageKey = "rated_" + sessionId;
         let lastShownAverage = null;
-        let hasRefused = false;
+
+        if (localStorage.getItem(storageKey)) {
+            document.getElementById('form').style.display = 'none';
+            document.getElementById('message').style.display = 'block';
+            document.getElementById('message').textContent = 'Вы уже участвовали с этого устройства';
+        }
 
         function send(score) {
+            if (localStorage.getItem(storageKey)) return;
             fetch('/submit/' + sessionId, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({score: score})
             }).then(() => {
+                localStorage.setItem(storageKey, '1');
+                document.getElementById('form').style.display = 'none';
                 document.getElementById('message').style.display = 'block';
                 document.getElementById('message').textContent = 'Спасибо! Оценка отправлена';
                 updateGirlStats();
@@ -333,15 +327,13 @@ RATE_HTML = """
         }
 
         function refuse() {
-            if (hasRefused) return;
-            hasRefused = true;
-            
+            if (localStorage.getItem(storageKey)) return;
             fetch('/refuse/' + sessionId, { method: 'POST' })
             .then(() => {
+                localStorage.setItem(storageKey, '1');
+                document.getElementById('form').style.display = 'none';
                 document.getElementById('message').style.display = 'block';
-                document.getElementById('message').textContent = 'Отказ учтён. Можешь всё равно поставить оценку, если передумаешь';
-                document.getElementById('refuse-btn').style.opacity = '0.4';
-                document.getElementById('refuse-btn').style.pointerEvents = 'none';
+                document.getElementById('message').textContent = 'Отказ учтён';
                 updateGirlStats();
             });
         }
@@ -353,24 +345,18 @@ RATE_HTML = """
                     const count = data.count;
                     const avg = data.average;
                     const refs = data.refusals;
-
-                    document.getElementById('girl-count').textContent = 
-                        count + ' оценок • ' + refs + ' отказов';
+                    document.getElementById('girl-count').textContent = count + ' оценок • ' + refs + ' отказов';
 
                     if (count >= 10 && count % 10 === 0) {
                         lastShownAverage = avg;
                         document.getElementById('girl-average').textContent = avg.toFixed(2);
                         document.getElementById('girl-status').textContent = `Текущая средняя (на ${count})`;
-                    } 
-                    else if (lastShownAverage !== null) {
+                    } else if (lastShownAverage !== null) {
                         document.getElementById('girl-average').textContent = lastShownAverage.toFixed(2);
-                        const left = 10 - (count % 10);
-                        document.getElementById('girl-status').textContent = `Следующее обновление через ${left}`;
-                    } 
-                    else {
+                        document.getElementById('girl-status').textContent = `Следующее обновление через ${10 - (count % 10)}`;
+                    } else {
                         document.getElementById('girl-average').textContent = '—';
-                        const left = 10 - count;
-                        document.getElementById('girl-status').textContent = `Ещё ${left} до открытия средней`;
+                        document.getElementById('girl-status').textContent = `Ещё ${10 - count} до открытия средней`;
                     }
                 });
         }
@@ -389,8 +375,9 @@ def index():
 @app.route('/new_session')
 def new_session():
     session_id = str(uuid.uuid4())[:8]
-    ratings[session_id] = []
-    refusals[session_id] = 0
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO sessions (session_id) VALUES (%s) ON CONFLICT DO NOTHING", (session_id,))
     return jsonify({'session_id': session_id})
 
 @app.route('/rate/<session_id>')
@@ -401,19 +388,28 @@ def rate(session_id):
 def submit(session_id):
     data = request.get_json()
     score = data.get('score')
-    if isinstance(score, (int, float)) and 1 <= score <= 10:
-        ratings[session_id].append(int(score))
+    if isinstance(score, (int, float)) and 1 <= int(score) <= 10:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO ratings (session_id, score) VALUES (%s, %s)", (session_id, int(score)))
     return jsonify({'ok': True})
 
 @app.route('/refuse/<session_id>', methods=['POST'])
 def refuse(session_id):
-    refusals[session_id] += 1
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO refusals (session_id) VALUES (%s)", (session_id,))
     return jsonify({'ok': True})
 
 @app.route('/stats/<session_id>')
 def stats(session_id):
-    scores = ratings.get(session_id, [])
-    ref_count = refusals.get(session_id, 0)
+    with get_db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT score FROM ratings WHERE session_id = %s", (session_id,))
+            scores = [row['score'] for row in cur.fetchall()]
+            cur.execute("SELECT COUNT(*) as cnt FROM refusals WHERE session_id = %s", (session_id,))
+            ref_count = cur.fetchone()['cnt']
+
     if not scores:
         return jsonify({'average': 0, 'count': 0, 'refusals': ref_count})
     return jsonify({
@@ -423,4 +419,5 @@ def stats(session_id):
     })
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
