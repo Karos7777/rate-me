@@ -15,7 +15,7 @@ HOST_HTML = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Оценка меня</title>
-    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -145,13 +145,15 @@ HOST_HTML = """
 
                     const rateUrl = window.location.origin + '/rate/' + currentSession;
                     document.getElementById('qrcode').innerHTML = '';
-                    QRCode.toCanvas(document.createElement('canvas'), rateUrl, {
-                        width: 200,
-                        margin: 1,
-                        color: { dark: '#5b21b6', light: '#ffffff' }
-                    }, function (err, canvas) {
-                        if (!err) document.getElementById('qrcode').appendChild(canvas);
-                    });
+                    document.getElementById('qrcode').innerHTML = '';
+new QRCode(document.getElementById('qrcode'), {
+    text: rateUrl,
+    width: 200,
+    height: 200,
+    colorDark: "#5b21b6",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.H
+});
 
                     if (pollInterval) clearInterval(pollInterval);
                     updateStats();
