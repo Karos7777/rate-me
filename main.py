@@ -346,7 +346,7 @@ RATE_HTML = """
         </div>
 
         <div class="message" id="message"></div>
-        <button class="copy-btn" id="copy-btn" onclick="copyTrackLink()">Скопировать ссылку на результаты</button>
+        <button class="copy-btn" id="copy-btn" onclick="copyTrackLink()">Скопировать ссылку</button>
         <div class="copy-msg" id="copy-msg">Ссылка скопирована!</div>
 
         <div class="live-stats">
