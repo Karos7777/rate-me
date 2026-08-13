@@ -157,7 +157,7 @@ HOST_HTML = """
             <div class="sub" id="count-text">0 оценок</div>
             <div class="ref-count" id="refusal-text">Отказов: 0</div>
 
-            <button onclick="copyTrackLink()">Скопировать ссылку на результаты</button>
+            <button onclick="copyTrackLink()">Скопировать ссылку</button>
             <div class="copy-msg" id="copy-msg">Ссылка скопирована!</div>
 
             <button class="secondary" onclick="startNew()">Новая сессия</button>
