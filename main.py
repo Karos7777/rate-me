@@ -50,7 +50,6 @@ def init_db():
                 );
             """)
 
-# Инициализируем таблицы при запуске
 try:
     init_db()
 except Exception as e:
@@ -96,11 +95,7 @@ HOST_HTML = """
             border-radius: 16px; 
             display: inline-block; 
         }
-        .stats {
-            font-size: 2.8rem;
-            font-weight: 800;
-            margin: 12px 0 4px;
-        }
+        .stats { font-size: 2.8rem; font-weight: 800; margin: 12px 0 4px; }
         .sub { font-size: 1.05rem; opacity: 0.9; margin-bottom: 6px; }
         .progress {
             background: rgba(255,255,255,0.2);
@@ -119,17 +114,28 @@ HOST_HTML = """
             background: white;
             color: #5b21b6;
             border: none;
-            padding: 15px 28px;
+            padding: 14px 28px;
             font-size: 1.05rem;
             border-radius: 50px;
             cursor: pointer;
             font-weight: 700;
-            margin-top: 18px;
+            margin-top: 12px;
             width: 100%;
         }
-        button:active { transform: scale(0.97); }
+        button.secondary {
+            background: transparent;
+            border: 2px solid rgba(255,255,255,0.5);
+            color: white;
+        }
         .hint { font-size: 0.85rem; opacity: 0.75; margin-top: 14px; line-height: 1.4; }
         .ref-count { margin-top: 10px; font-size: 0.95rem; opacity: 0.85; }
+        .copy-msg {
+            font-size: 0.9rem;
+            margin-top: 8px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .copy-msg.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -150,7 +156,11 @@ HOST_HTML = """
             </div>
             <div class="sub" id="count-text">0 оценок</div>
             <div class="ref-count" id="refusal-text">Отказов: 0</div>
-            <button onclick="startNew()">Новая сессия</button>
+
+            <button onclick="copyTrackLink()">Скопировать ссылку на результаты</button>
+            <div class="copy-msg" id="copy-msg">Ссылка скопирована!</div>
+
+            <button class="secondary" onclick="startNew()">Новая сессия</button>
             <div class="hint">
                 Средняя появляется каждые 10 оценок<br>
                 Отказы не влияют на среднюю
@@ -189,6 +199,16 @@ HOST_HTML = """
                     pollInterval = setInterval(updateStats, 1500);
                 })
                 .catch(err => alert('Ошибка: ' + err));
+        }
+
+        function copyTrackLink() {
+            if (!currentSession) return;
+            const link = window.location.origin + '/track/' + currentSession;
+            navigator.clipboard.writeText(link).then(() => {
+                const msg = document.getElementById('copy-msg');
+                msg.classList.add('show');
+                setTimeout(() => msg.classList.remove('show'), 2000);
+            });
         }
 
         function updateStats() {
@@ -368,6 +388,84 @@ RATE_HTML = """
 </html>
 """
 
+TRACK_HTML = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Результаты оценки</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            text-align: center;
+        }
+        .card {
+            background: rgba(255,255,255,0.15);
+            backdrop-filter: blur(12px);
+            border-radius: 24px;
+            padding: 36px 28px;
+            max-width: 380px;
+            width: 100%;
+        }
+        h1 { margin: 0 0 12px; font-size: 1.6rem; }
+        .avg { font-size: 3.2rem; font-weight: 800; margin: 16px 0 8px; }
+        .sub { font-size: 1.1rem; opacity: 0.9; margin: 6px 0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Результаты оценки</h1>
+        <div class="avg" id="average">—</div>
+        <div class="sub" id="status">Загрузка...</div>
+        <div class="sub" id="count"></div>
+        <div class="sub" id="refusals"></div>
+    </div>
+
+    <script>
+        const sessionId = "{{ session_id }}";
+        let lastShownAverage = null;
+
+        function update() {
+            fetch('/stats/' + sessionId)
+                .then(r => r.json())
+                .then(data => {
+                    const count = data.count;
+                    const avg = data.average;
+                    const refs = data.refusals;
+
+                    document.getElementById('count').textContent = count + ' оценок';
+                    document.getElementById('refusals').textContent = refs + ' отказов';
+
+                    if (count >= 10 && count % 10 === 0) {
+                        lastShownAverage = avg;
+                        document.getElementById('average').textContent = avg.toFixed(2);
+                        document.getElementById('status').textContent = `Средняя на ${count} оценках`;
+                    } else if (lastShownAverage !== null) {
+                        document.getElementById('average').textContent = lastShownAverage.toFixed(2);
+                        document.getElementById('status').textContent = `Следующее обновление через ${10 - (count % 10)}`;
+                    } else {
+                        document.getElementById('average').textContent = '—';
+                        document.getElementById('status').textContent = count < 10 ? `Ещё ${10 - count} до открытия` : 'Ожидание...';
+                    }
+                });
+        }
+
+        update();
+        setInterval(update, 3000);
+    </script>
+</body>
+</html>
+"""
+
 @app.route('/')
 def index():
     return render_template_string(HOST_HTML)
@@ -383,6 +481,10 @@ def new_session():
 @app.route('/rate/<session_id>')
 def rate(session_id):
     return render_template_string(RATE_HTML, session_id=session_id)
+
+@app.route('/track/<session_id>')
+def track(session_id):
+    return render_template_string(TRACK_HTML, session_id=session_id)
 
 @app.route('/submit/<session_id>', methods=['POST'])
 def submit(session_id):
