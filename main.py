@@ -157,7 +157,7 @@ HOST_HTML = """
             <div class="sub" id="count-text">0 оценок</div>
             <div class="ref-count" id="refusal-text">Отказов: 0</div>
 
-            <button onclick="copyTrackLink()">Скопировать ссылку</button>
+            <button onclick="copyTrackLink()">Скопировать ссылку на результаты</button>
             <div class="copy-msg" id="copy-msg">Ссылка скопирована!</div>
 
             <button class="secondary" onclick="startNew()">Новая сессия</button>
@@ -169,36 +169,50 @@ HOST_HTML = """
     </div>
 
     <script>
-        let currentSession = null;
+        let currentSession = localStorage.getItem('currentSession') || null;
         let pollInterval = null;
         let lastShownAverage = null;
+
+        // Восстанавливаем сессию при обновлении страницы
+        if (currentSession) {
+            document.getElementById('no-session').style.display = 'none';
+            document.getElementById('active-session').style.display = 'block';
+            showQR(currentSession);
+            updateStats();
+            pollInterval = setInterval(updateStats, 1500);
+        }
 
         function startNew() {
             fetch('/new_session')
                 .then(r => r.json())
                 .then(data => {
                     currentSession = data.session_id;
+                    localStorage.setItem('currentSession', currentSession);
                     lastShownAverage = null;
 
                     document.getElementById('no-session').style.display = 'none';
                     document.getElementById('active-session').style.display = 'block';
 
-                    const rateUrl = window.location.origin + '/rate/' + currentSession;
-                    document.getElementById('qrcode').innerHTML = '';
-                    new QRCode(document.getElementById('qrcode'), {
-                        text: rateUrl,
-                        width: 200,
-                        height: 200,
-                        colorDark: "#5b21b6",
-                        colorLight: "#ffffff",
-                        correctLevel: QRCode.CorrectLevel.H
-                    });
+                    showQR(currentSession);
 
                     if (pollInterval) clearInterval(pollInterval);
                     updateStats();
                     pollInterval = setInterval(updateStats, 1500);
                 })
                 .catch(err => alert('Ошибка: ' + err));
+        }
+
+        function showQR(sessionId) {
+            const rateUrl = window.location.origin + '/rate/' + sessionId;
+            document.getElementById('qrcode').innerHTML = '';
+            new QRCode(document.getElementById('qrcode'), {
+                text: rateUrl,
+                width: 200,
+                height: 200,
+                colorDark: "#5b21b6",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
         }
 
         function copyTrackLink() {
@@ -456,6 +470,25 @@ TRACK_HTML = """
         h1 { margin: 0 0 12px; font-size: 1.6rem; }
         .avg { font-size: 3.2rem; font-weight: 800; margin: 16px 0 8px; }
         .sub { font-size: 1.1rem; opacity: 0.9; margin: 6px 0; }
+        button {
+            background: white;
+            color: #5b21b6;
+            border: none;
+            padding: 14px 24px;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 50px;
+            cursor: pointer;
+            margin-top: 20px;
+            width: 100%;
+        }
+        .copy-msg {
+            font-size: 0.9rem;
+            margin-top: 10px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .copy-msg.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -465,11 +498,25 @@ TRACK_HTML = """
         <div class="sub" id="status">Загрузка...</div>
         <div class="sub" id="count"></div>
         <div class="sub" id="refusals"></div>
+
+        <button onclick="copyTrackLink()">Скопировать ссылку</button>
+        <div class="copy-msg" id="copy-msg">Ссылка скопирована!</div>
     </div>
 
     <script>
         const sessionId = "{{ session_id }}";
         let lastShownAverage = null;
+
+        function copyTrackLink() {
+            const link = window.location.href;
+            navigator.clipboard.writeText(link).then(() => {
+                const msg = document.getElementById('copy-msg');
+                msg.classList.add('show');
+                setTimeout(() => msg.classList.remove('show'), 2000);
+            }).catch(() => {
+                prompt("Скопируй ссылку:", link);
+            });
+        }
 
         function update() {
             fetch('/stats/' + sessionId)
